@@ -779,7 +779,14 @@ class StableDiffusionXLImg2ImgRefinerOnlyPipelineFastTests(
 
 @slow
 class StableDiffusionXLImg2ImgIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        # clean up the VRAM before each test
+        super().setUp()
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def tearDown(self):
+        # clean up the VRAM after each test
         super().tearDown()
         gc.collect()
         torch.cuda.empty_cache()
@@ -816,3 +823,37 @@ class StableDiffusionXLImg2ImgIntegrationTests(unittest.TestCase):
         max_diff = numpy_cosine_similarity_distance(image.flatten(), image_single_file.flatten())
 
         assert max_diff < 5e-2
+
+    def test_single_file_component_configs(self):
+        pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-refiner-1.0",
+            torch_dtype=torch.float16,
+            variant="fp16",
+        )
+        ckpt_path = "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/blob/main/sd_xl_refiner_1.0.safetensors"
+        single_file_pipe = StableDiffusionXLImg2ImgPipeline.from_single_file(ckpt_path, torch_dtype=torch.float16)
+
+        assert pipe.text_encoder is None
+        assert single_file_pipe.text_encoder is None
+
+        for param_name, param_value in single_file_pipe.text_encoder_2.config.to_dict().items():
+            if param_name in ["torch_dtype", "architectures", "_name_or_path"]:
+                continue
+            assert pipe.text_encoder_2.config.to_dict()[param_name] == param_value
+
+        PARAMS_TO_IGNORE = ["torch_dtype", "_name_or_path", "architectures", "_use_default_values"]
+        for param_name, param_value in single_file_pipe.unet.config.items():
+            if param_name in PARAMS_TO_IGNORE:
+                continue
+            if param_name == "upcast_attention" and pipe.unet.config[param_name] is None:
+                pipe.unet.config[param_name] = False
+            assert (
+                pipe.unet.config[param_name] == param_value
+            ), f"{param_name} is differs between single file loading and pretrained loading"
+
+        for param_name, param_value in single_file_pipe.vae.config.items():
+            if param_name in PARAMS_TO_IGNORE:
+                continue
+            assert (
+                pipe.vae.config[param_name] == param_value
+            ), f"{param_name} differs between single file loading and pretrained loading"
