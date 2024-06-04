@@ -59,6 +59,8 @@ def get_down_block(
     temporal_num_attention_heads: int = 8,
     temporal_max_seq_length: int = 32,
     transformer_layers_per_block: int = 1,
+    flow_is_same_channel: bool = True,
+    flow_dim_scale: Optional[int] = None,
 ) -> Union[
     "DownBlock3D",
     "CrossAttnDownBlock3D",
@@ -148,6 +150,8 @@ def get_down_block(
             out_channels=out_channels,
             temb_channels=temb_channels,
             add_downsample=add_downsample,
+            flow_is_same_channel=flow_is_same_channel,
+            flow_dim_scale=flow_dim_scale,
         )
     elif down_block_type == "CrossAttnDownBlockSpatioTemporal":
         # added for SDV
@@ -162,6 +166,8 @@ def get_down_block(
             add_downsample=add_downsample,
             cross_attention_dim=cross_attention_dim,
             num_attention_heads=num_attention_heads,
+            flow_is_same_channel=flow_is_same_channel,
+            flow_dim_scale=flow_dim_scale,
         )
 
     raise ValueError(f"{down_block_type} does not exist.")
@@ -191,6 +197,8 @@ def get_up_block(
     temporal_max_seq_length: int = 32,
     transformer_layers_per_block: int = 1,
     dropout: float = 0.0,
+    flow_is_same_channel: bool = True,
+    flow_dim_scale: Optional[int] = None,
 ) -> Union[
     "UpBlock3D",
     "CrossAttnUpBlock3D",
@@ -286,6 +294,8 @@ def get_up_block(
             temb_channels=temb_channels,
             resolution_idx=resolution_idx,
             add_upsample=add_upsample,
+            flow_is_same_channel=flow_is_same_channel,
+            flow_dim_scale=flow_dim_scale,
         )
     elif up_block_type == "CrossAttnUpBlockSpatioTemporal":
         # added for SDV
@@ -302,6 +312,8 @@ def get_up_block(
             cross_attention_dim=cross_attention_dim,
             num_attention_heads=num_attention_heads,
             resolution_idx=resolution_idx,
+            flow_is_same_channel=flow_is_same_channel,
+            flow_dim_scale=flow_dim_scale,
         )
 
     raise ValueError(f"{up_block_type} does not exist.")
@@ -1996,18 +2008,24 @@ class DownBlockSpatioTemporal(nn.Module):
         temb_channels: int,
         num_layers: int = 1,
         add_downsample: bool = True,
+        flow_is_same_channel: bool = True,
+        flow_dim_scale: Optional[int] = None,
     ):
         super().__init__()
         resnets = []
 
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
+            flow_scale = flow_dim_scale if i == 0 else None
+
             resnets.append(
                 SpatioTemporalResBlock(
                     in_channels=in_channels,
                     out_channels=out_channels,
                     temb_channels=temb_channels,
                     eps=1e-5,
+                    flow_is_same_channel=flow_is_same_channel,
+                    flow_dim_scale=flow_scale,
                 )
             )
 
@@ -2034,7 +2052,8 @@ class DownBlockSpatioTemporal(nn.Module):
         hidden_states: torch.Tensor,
         temb: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+        flow: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.FloatTensor, Tuple[torch.FloatTensor, ...]]:
         output_states = ()
         for resnet in self.resnets:
             if self.training and self.gradient_checkpointing:
@@ -2061,10 +2080,12 @@ class DownBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                     )
             else:
+                flow = flow if hasattr(resnet.spatial_res_block, "flow_cond_norm") else None
                 hidden_states = resnet(
                     hidden_states,
                     temb,
                     image_only_indicator=image_only_indicator,
+                    flow=flow,
                 )
 
             output_states = output_states + (hidden_states,)
@@ -2089,6 +2110,8 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
         add_downsample: bool = True,
+        flow_is_same_channel: bool = True,
+        flow_dim_scale: Optional[int] = None,
     ):
         super().__init__()
         resnets = []
@@ -2101,12 +2124,16 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
 
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
+            flow_scale = flow_dim_scale if i == 0 else None
+
             resnets.append(
                 SpatioTemporalResBlock(
                     in_channels=in_channels,
                     out_channels=out_channels,
                     temb_channels=temb_channels,
                     eps=1e-6,
+                    flow_is_same_channel=flow_is_same_channel,
+                    flow_dim_scale=flow_scale,
                 )
             )
             attentions.append(
@@ -2145,7 +2172,8 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         temb: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+        flow: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.FloatTensor, Tuple[torch.FloatTensor, ...]]:
         output_states = ()
 
         blocks = list(zip(self.resnets, self.attentions))
@@ -2177,10 +2205,12 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     return_dict=False,
                 )[0]
             else:
+                flow = flow if hasattr(resnet.spatial_res_block, "flow_cond_norm") else None
                 hidden_states = resnet(
                     hidden_states,
                     temb,
                     image_only_indicator=image_only_indicator,
+                    flow=flow,
                 )
                 hidden_states = attn(
                     hidden_states,
@@ -2211,6 +2241,8 @@ class UpBlockSpatioTemporal(nn.Module):
         num_layers: int = 1,
         resnet_eps: float = 1e-6,
         add_upsample: bool = True,
+        flow_is_same_channel: bool = True,
+        flow_dim_scale: Optional[int] = None,
     ):
         super().__init__()
         resnets = []
@@ -2218,6 +2250,7 @@ class UpBlockSpatioTemporal(nn.Module):
         for i in range(num_layers):
             res_skip_channels = in_channels if (i == num_layers - 1) else out_channels
             resnet_in_channels = prev_output_channel if i == 0 else out_channels
+            flow_scale = flow_dim_scale if i == 0 else None
 
             resnets.append(
                 SpatioTemporalResBlock(
@@ -2225,6 +2258,8 @@ class UpBlockSpatioTemporal(nn.Module):
                     out_channels=out_channels,
                     temb_channels=temb_channels,
                     eps=resnet_eps,
+                    flow_is_same_channel=flow_is_same_channel,
+                    flow_dim_scale=flow_scale,
                 )
             )
 
@@ -2244,6 +2279,7 @@ class UpBlockSpatioTemporal(nn.Module):
         res_hidden_states_tuple: Tuple[torch.Tensor, ...],
         temb: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
+        flow: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         for resnet in self.resnets:
             # pop res hidden states
@@ -2276,10 +2312,12 @@ class UpBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                     )
             else:
+                flow = flow if hasattr(resnet.spatial_res_block, "flow_cond_norm") else None
                 hidden_states = resnet(
                     hidden_states,
                     temb,
                     image_only_indicator=image_only_indicator,
+                    flow=flow,
                 )
 
         if self.upsamplers is not None:
@@ -2303,6 +2341,8 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
         add_upsample: bool = True,
+        flow_is_same_channel: bool = True,
+        flow_dim_scale: Optional[int] = None,
     ):
         super().__init__()
         resnets = []
@@ -2317,6 +2357,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         for i in range(num_layers):
             res_skip_channels = in_channels if (i == num_layers - 1) else out_channels
             resnet_in_channels = prev_output_channel if i == 0 else out_channels
+            flow_scale = flow_dim_scale if i == 0 else None
 
             resnets.append(
                 SpatioTemporalResBlock(
@@ -2324,6 +2365,8 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     out_channels=out_channels,
                     temb_channels=temb_channels,
                     eps=resnet_eps,
+                    flow_is_same_channel=flow_is_same_channel,
+                    flow_dim_scale=flow_scale,
                 )
             )
             attentions.append(
@@ -2354,6 +2397,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         temb: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
+        flow: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
@@ -2388,10 +2432,12 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     return_dict=False,
                 )[0]
             else:
+                flow = flow if hasattr(resnet.spatial_res_block, "flow_cond_norm") else None
                 hidden_states = resnet(
                     hidden_states,
                     temb,
                     image_only_indicator=image_only_indicator,
+                    flow=flow,
                 )
                 hidden_states = attn(
                     hidden_states,
