@@ -499,8 +499,8 @@ class CrossAttnDownBlock3D(nn.Module):
             )
             attentions.append(
                 Transformer2DModel(
-                    out_channels // num_attention_heads,
                     num_attention_heads,
+                    out_channels // num_attention_heads,
                     in_channels=out_channels,
                     num_layers=1,
                     cross_attention_dim=cross_attention_dim,
@@ -512,8 +512,8 @@ class CrossAttnDownBlock3D(nn.Module):
             )
             temp_attentions.append(
                 TransformerTemporalModel(
-                    out_channels // num_attention_heads,
                     num_attention_heads,
+                    out_channels // num_attention_heads,
                     in_channels=out_channels,
                     num_layers=1,
                     cross_attention_dim=cross_attention_dim,
@@ -733,8 +733,8 @@ class CrossAttnUpBlock3D(nn.Module):
             )
             attentions.append(
                 Transformer2DModel(
-                    out_channels // num_attention_heads,
                     num_attention_heads,
+                    out_channels // num_attention_heads,
                     in_channels=out_channels,
                     num_layers=1,
                     cross_attention_dim=cross_attention_dim,
@@ -746,8 +746,8 @@ class CrossAttnUpBlock3D(nn.Module):
             )
             temp_attentions.append(
                 TransformerTemporalModel(
-                    out_channels // num_attention_heads,
                     num_attention_heads,
+                    out_channels // num_attention_heads,
                     in_channels=out_channels,
                     num_layers=1,
                     cross_attention_dim=cross_attention_dim,
