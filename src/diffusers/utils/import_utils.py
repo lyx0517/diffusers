@@ -332,7 +332,7 @@ try:
 except NameError:
     pass  # Probably standard Python interpreter
 
-_is_google_colab = "google.colab" in sys.modules
+_is_google_colab = "google.colab" in sys.modules or any(k.startswith("COLAB_") for k in os.environ)
 
 
 def is_torch_available():
