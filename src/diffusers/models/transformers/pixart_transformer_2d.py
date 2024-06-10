@@ -17,6 +17,7 @@ import torch
 from torch import nn
 
 from ...configuration_utils import ConfigMixin, register_to_config
+from ...loaders.single_file_model import FromOriginalModelMixin
 from ...utils import is_torch_version, logging
 from ..attention import BasicTransformerBlock
 from ..embeddings import PatchEmbed, PixArtAlphaTextProjection
@@ -28,7 +29,7 @@ from ..normalization import AdaLayerNormSingle
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
+class PixArtTransformer2DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     r"""
     A 2D Transformer model as introduced in PixArt family of models (https://arxiv.org/abs/2310.00426,
     https://arxiv.org/abs/2403.04692).
