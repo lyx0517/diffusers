@@ -119,6 +119,8 @@ class BasicTransformerBlock(nn.Module):
             The type of positional embeddings to apply to.
         num_positional_embeddings (`int`, *optional*, defaults to `None`):
             The maximum number of positional embeddings to apply.
+        squeeze_hidden_states (`bool`, *optional*, defaults to `True`): 
+            Whether to squeeze the hidden states. Set to `False` for Latte.
     """
 
     def __init__(
@@ -253,6 +255,8 @@ class BasicTransformerBlock(nn.Module):
             self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
         elif norm_type == "layer_norm_i2vgen":
             self.norm3 = None
+        else:
+            self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
 
         self.ff = FeedForward(
             dim,
@@ -316,6 +320,8 @@ class BasicTransformerBlock(nn.Module):
             norm_hidden_states = self.norm1(hidden_states)
             norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
             norm_hidden_states = norm_hidden_states.squeeze(1)
+            if norm_hidden_states.ndim == 2: # for Latte
+                norm_hidden_states = norm_hidden_states.unsqueeze(1)
         else:
             raise ValueError("Incorrect norm used")
 
@@ -332,6 +338,7 @@ class BasicTransformerBlock(nn.Module):
             attention_mask=attention_mask,
             **cross_attention_kwargs,
         )
+
         if self.norm_type == "ada_norm_zero":
             attn_output = gate_msa.unsqueeze(1) * attn_output
         elif self.norm_type == "ada_norm_single":
@@ -382,7 +389,9 @@ class BasicTransformerBlock(nn.Module):
             norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
 
         if self.norm_type == "ada_norm_single":
-            norm_hidden_states = self.norm2(hidden_states)
+            norm_func = self.norm2 if self.norm2 is not None else self.norm3
+            # norm_hidden_states = self.norm2(hidden_states)
+            norm_hidden_states = norm_func(hidden_states)
             norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
         if self._chunk_size is not None:
